@@ -19,7 +19,6 @@ def get_local_storage():
     const stock_list = data ? JSON.parse(data) : [];
     const streamlitDoc = window.parent.document;
     
-    // Streamlit側にデータを渡す (Invisible inputを使う)
     const invisibleInput = streamlitDoc.querySelector('input[aria-label="storage_sync"]');
     if (invisibleInput) {
         invisibleInput.value = JSON.stringify(stock_list);
@@ -68,7 +67,7 @@ if storage_sync and storage_sync != "[]" and not st.session_state.stock_list:
 st.subheader("1. 銘柄の指定")
 
 # 銘柄検索＆追加エリア
-code_input = st.text_input("証券コードを入力（例: 2929, 2541）", value="")
+code_input = st.text_input("証券コードを入力（例: 2929, 2541, 9432）", value="")
 
 if st.button("🔍 銘柄名を検索して確認"):
   if code_input.strip():
@@ -77,13 +76,23 @@ if st.button("🔍 銘柄名を検索して確認"):
     try:
       with st.spinner("検索中..."):
         ticker = yf.Ticker(ticker_symbol)
-        info = ticker.info
-        name = (
-            info.get("longName")
-            or info.get("shortName")
-            or info.get("symbol")
-            or "名称未取得"
-        )
+
+        # 銘柄名の取得処理（いくつかの候補から安全に取得）
+        name = None
+        try:
+          info = ticker.info
+          name = (
+              info.get("longName")
+              or info.get("shortName")
+              or info.get("symbol")
+          )
+        except Exception:
+          pass
+
+        # infoで取れなかった場合のバックアップ表示名
+        if not name or name == "名称未取得":
+          name = f"証券コード {code}"
+
         st.session_state.found_stock = {"code": code, "name": name}
         st.success(f"確認成功: 【{name}】 (コード: {code})")
     except Exception as e:
@@ -152,33 +161,52 @@ if st.button("🚀 情報収集＆テキスト生成", type="primary"):
       for s in st.session_state.stock_list:
         try:
           ticker = yf.Ticker(f"{s['code']}.T")
-          hist = ticker.history(period="1d", interval="1m")
-          info = ticker.info
 
-          current_price = info.get("currentPrice") or info.get(
-              "regularMarketPrice", 0
-          )
-          high_price = info.get("dayHigh", 0)
-          volume = info.get("volume", 0)
-          prev_close = info.get("previousClose", 0)
+          # 過去5日分の日足データと直近の1分足データを取得
+          hist_daily = ticker.history(period="5d")
+          hist_1m = ticker.history(period="1d", interval="1m")
 
-          if not hist.empty and "Volume" in hist and hist["Volume"].sum() > 0:
-            vwap = (hist["Close"] * hist["Volume"]).sum() / hist["Volume"].sum()
+          if hist_daily.empty:
+            output_lines.append(
+                f"{s['name']}{s['code']} (データ取得失敗)"
+            )
+            output_lines.append("")
+            continue
+
+          # 現在株価（最新の終値）
+          current_price = hist_daily["Close"].iloc[-1]
+
+          # 前日終値
+          if len(hist_daily) >= 2:
+            prev_close = hist_daily["Close"].iloc[-2]
+          else:
+            prev_close = current_price
+
+          # 当日の高値と出来高
+          high_price = hist_daily["High"].iloc[-1]
+          volume = hist_daily["Volume"].iloc[-1]
+
+          # VWAPの計算（1分足データがあれば計算、なければ現在値）
+          if not hist_1m.empty and hist_1m["Volume"].sum() > 0:
+            vwap = (hist_1m["Close"] * hist_1m["Volume"]).sum() / hist_1m[
+                "Volume"
+            ].sum()
           else:
             vwap = current_price
 
           line1 = f"{s['name']} {s['code']}"
           line2 = (
-              f"{current_price:,} / VWAP {vwap:,.2f} / 高値{high_price:,} /"
-              f" 出来高 {volume:,} / 前日{prev_close:,}"
+              f"{current_price:,.1f} / VWAP {vwap:,.2f} / 高値{high_price:,.1f}"
+              f" / 出来高 {int(volume):,} / 前日{prev_close:,.1f}"
           )
 
           output_lines.append(line1)
           output_lines.append(line2)
           output_lines.append("")
+
         except Exception as e:
           output_lines.append(
-              f"{s['name']} {s['code']} (データ取得エラー)"
+              f"{s['name']} {s['code']} (データ取得エラー: {e})"
           )
           output_lines.append("")
 
