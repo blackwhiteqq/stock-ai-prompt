@@ -12,36 +12,32 @@ st.set_page_config(
 # === スマホブラウザに記憶させるためのJavaScriptロジック ===
 def get_local_storage():
   """LocalStorageから銘柄リストを取得するJavaScript"""
-  return """
-    <script>
-    (function() {
-        const key = 'st_stock_list';
-        const data = localStorage.getItem(key);
-        const stock_list = data ? JSON.parse(data) : [];
-        const streamlitDoc = window.parent.document;
-        
-        // Streamlit側にデータを渡す (Invisible inputを使う)
-        const invisibleInput = streamlitDoc.querySelector('input[aria-label="storage_sync"]');
-        if (invisibleInput) {
-            invisibleInput.value = JSON.stringify(stock_list);
-            invisibleInput.dispatchEvent(new Event('input', { bubbles: true }));
-        }
-    })();
-    </script>
-    """
+  return """<script>
+(function() {
+    const key = 'st_stock_list';
+    const data = localStorage.getItem(key);
+    const stock_list = data ? JSON.parse(data) : [];
+    const streamlitDoc = window.parent.document;
+    
+    // Streamlit側にデータを渡す (Invisible inputを使う)
+    const invisibleInput = streamlitDoc.querySelector('input[aria-label="storage_sync"]');
+    if (invisibleInput) {
+        invisibleInput.value = JSON.stringify(stock_list);
+        invisibleInput.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+})();
+</script>"""
 
 
 def set_local_storage(stock_list):
   """LocalStorageに銘柄リストを保存するJavaScript"""
   data_json = json.dumps(stock_list)
-  return f"""
-    <script>
-    (function() {
-        const key = 'st_stock_list';
-        localStorage.setItem(key, `{data_json}`);
-    })();
-    </script>
-    """
+  return f"""<script>
+(function() {{
+    const key = 'st_stock_list';
+    localStorage.setItem(key, `{data_json}`);
+}})();
+</script>"""
 
 
 st.title("📈 AI株相談 テキスト生成")
@@ -200,27 +196,25 @@ if "result_text" in st.session_state and st.session_state.result_text:
   escaped_text = st.session_state.result_text.replace("`", "\\`").replace(
       "\n", "\\n"
   )
-  copy_html = f"""
-    <button id="copyBtn" style="
-        width: 100%;
-        padding: 12px;
-        background-color: #FF4B4B;
-        color: white;
-        border: none;
-        border-radius: 8px;
-        font-weight: bold;
-        font-size: 16px;
-        cursor: pointer;
-    ">📋 クリップボードにコピー</button>
+  copy_html = f"""<button id="copyBtn" style="
+    width: 100%;
+    padding: 12px;
+    background-color: #FF4B4B;
+    color: white;
+    border: none;
+    border-radius: 8px;
+    font-weight: bold;
+    font-size: 16px;
+    cursor: pointer;
+">📋 クリップボードにコピー</button>
 
-    <script>
-    document.getElementById('copyBtn').addEventListener('click', function() {{
-        navigator.clipboard.writeText(`{escaped_text}`).then(function() {{
-            alert('クリップボードにコピーしました！');
-        }}).catch(function(err) {{
-            alert('コピーに失敗しました: ' + err);
-        }});
+<script>
+document.getElementById('copyBtn').addEventListener('click', function() {{
+    navigator.clipboard.writeText(`{escaped_text}`).then(function() {{
+        alert('クリップボードにコピーしました！');
+    }}).catch(function(err) {{
+        alert('コピーに失敗しました: ' + err);
     }});
-    </script>
-    """
+}});
+</script>"""
   st.components.v1.html(copy_html, height=70)
