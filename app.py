@@ -66,22 +66,30 @@ if storage_sync and storage_sync != "[]" and not st.session_state.stock_list:
 
 st.subheader("1. 銘柄の指定")
 
-# 銘柄検索＆追加エリア
-code_input = st.text_input("証券コードを入力（例: 2929, 2541, 9432）", value="")
+# 銘柄検索＆入力エリア
+col_code, col_name = st.columns([1, 2])
+with col_code:
+  code_input = st.text_input("証券コード", value="", placeholder="例: 2929")
+with col_name:
+  custom_name_input = st.text_input(
+      "銘柄名（自動検索可・手動変更可）",
+      value="",
+      placeholder="例: ファーマフーズ",
+  )
 
-if st.button("🔍 銘柄名を検索して確認"):
+if st.button("🔍 銘柄情報を自動検索してセット"):
   if code_input.strip():
     code = code_input.strip()
     ticker_symbol = f"{code}.T"
     try:
       with st.spinner("検索中..."):
         ticker = yf.Ticker(ticker_symbol)
+        fetched_name = None
 
-        # 銘柄名の取得処理（いくつかの候補から安全に取得）
-        name = None
+        # yfinanceから銘柄名の取得を試みる
         try:
           info = ticker.info
-          name = (
+          fetched_name = (
               info.get("longName")
               or info.get("shortName")
               or info.get("symbol")
@@ -89,37 +97,37 @@ if st.button("🔍 銘柄名を検索して確認"):
         except Exception:
           pass
 
-        # infoで取れなかった場合のバックアップ表示名
-        if not name or name == "名称未取得":
-          name = f"証券コード {code}"
+        if not fetched_name or fetched_name == f"{code}.T":
+          fetched_name = f"銘柄_{code}"
 
-        st.session_state.found_stock = {"code": code, "name": name}
-        st.success(f"確認成功: 【{name}】 (コード: {code})")
+        st.session_state.temp_code = code
+        st.session_state.temp_name = fetched_name
+        st.success(f"取得成功: 【{fetched_name}】 (コード: {code})")
     except Exception as e:
-      st.error("銘柄情報の取得に失敗しました。コードを確認してください。")
+      st.error("銘柄情報の取得に失敗しました。")
   else:
     st.warning("証券コードを入力してください。")
 
-# 検索成功時にリスト追加ボタンを表示
-if "found_stock" in st.session_state and st.session_state.found_stock:
-  if st.button(
-      f"➕ 「{st.session_state.found_stock['name']}」をリストに追加"
-  ):
-    if not any(
-        s["code"] == st.session_state.found_stock["code"]
-        for s in st.session_state.stock_list
-    ):
-      st.session_state.stock_list.append(st.session_state.found_stock)
-      st.components.v1.html(
-          set_local_storage(st.session_state.stock_list), height=0
-      )
-      st.toast(
-          f"リストに追加しました: {st.session_state.found_stock['name']}"
-      )
-      del st.session_state.found_stock
-      st.rerun()
-    else:
-      st.info("すでにリストに含まれている銘柄です。")
+# 追加ボタン（手動入力された名称があればそれを優先）
+add_code = code_input.strip()
+add_name = (
+    custom_name_input.strip()
+    or getattr(st.session_state, "temp_name", "")
+    or f"銘柄_{add_code}"
+)
+
+if add_code and st.button(f"➕ 「{add_name} ({add_code})」をリストに追加"):
+  if not any(s["code"] == add_code for s in st.session_state.stock_list):
+    st.session_state.stock_list.append({"code": add_code, "name": add_name})
+    st.components.v1.html(
+        set_local_storage(st.session_state.stock_list), height=0
+    )
+    st.toast(f"リストに追加しました: {add_name}")
+    if "temp_name" in st.session_state:
+      del st.session_state.temp_name
+    st.rerun()
+  else:
+    st.info("すでにリストに含まれている銘柄です。")
 
 # 選択中銘柄リストの表示・削除
 if st.session_state.stock_list:
@@ -162,36 +170,32 @@ if st.button("🚀 情報収集＆テキスト生成", type="primary"):
         try:
           ticker = yf.Ticker(f"{s['code']}.T")
 
-          # 過去5日分の日足データと直近の1分足データを取得
-          hist_daily = ticker.history(period="5d")
-          hist_1m = ticker.history(period="1d", interval="1m")
+          # 直近の当日の1分足データと日足データを精度高く取得
+          hist_1d = ticker.history(period="1d", interval="1m")
+          hist_5d = ticker.history(period="5d", interval="1d")
 
-          if hist_daily.empty:
-            output_lines.append(
-                f"{s['name']}{s['code']} (データ取得失敗)"
-            )
-            output_lines.append("")
-            continue
+          # 1. 現在株価・出来高の最新値
+          fast_info = getattr(ticker, "fast_info", {})
+          current_price = fast_info.get("lastPrice") or (
+              hist_1d["Close"].iloc[-1] if not hist_1d.empty else 0
+          )
+          prev_close = fast_info.get("previousClose") or (
+              hist_5d["Close"].iloc[-2] if len(hist_5d) >= 2 else current_price
+          )
 
-          # 現在株価（最新の終値）
-          current_price = hist_daily["Close"].iloc[-1]
-
-          # 前日終値
-          if len(hist_daily) >= 2:
-            prev_close = hist_daily["Close"].iloc[-2]
+          # 当日の高値・出来高
+          if not hist_1d.empty:
+            high_price = hist_1d["High"].max()
+            volume = hist_1d["Volume"].sum()
+            # VWAP（出来高加重平均価格）の正確な計算
+            vwap = (hist_1d["Close"] * hist_1d["Volume"]).sum() / volume if volume > 0 else current_price
+          elif not hist_5d.empty:
+            high_price = hist_5d["High"].iloc[-1]
+            volume = hist_5d["Volume"].iloc[-1]
+            vwap = current_price
           else:
-            prev_close = current_price
-
-          # 当日の高値と出来高
-          high_price = hist_daily["High"].iloc[-1]
-          volume = hist_daily["Volume"].iloc[-1]
-
-          # VWAPの計算（1分足データがあれば計算、なければ現在値）
-          if not hist_1m.empty and hist_1m["Volume"].sum() > 0:
-            vwap = (hist_1m["Close"] * hist_1m["Volume"]).sum() / hist_1m[
-                "Volume"
-            ].sum()
-          else:
+            high_price = current_price
+            volume = 0
             vwap = current_price
 
           line1 = f"{s['name']} {s['code']}"
